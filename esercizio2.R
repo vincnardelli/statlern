@@ -3,7 +3,6 @@ install_github(repo="ryantibs/conformal", subdir="conformalInference")
 library(conformalInference)
 library(randomForest)
 library(xgboost)
-library(ggplot2)
 
 
 train <- read.table("train.txt", header = T)
@@ -64,71 +63,6 @@ mean((y_train - pred_y)^2)
 mse_xgboost <- mean((pred_y - y_train)^2)
 
 
-# lm
-funs_lm = lm.funs(lambda = 0)
-outsplit_lm = conformal.pred.split(x_train,
-                                   y_train,
-                                   x_train,
-                                   alpha=alpha,
-                                   seed=0,
-                                   train.fun=funs_lm$train,
-                                   predict.fun=funs_lm$predict,
-                                   verbose = T)
-
-cov_split_lm = colMeans(outsplit_lm$lo <= y_train & y_train <= outsplit_lm$up)
-cov_split_lm
-len_split_lm = colMeans(outsplit_lm$up - outsplit_lm$lo)
-len_split_lm
-
-
-# lasso
-funs_lasso = lasso.funs(cv = T)
-outsplit_lasso = conformal.pred.split(x_train,
-                                      y_train,
-                                      x_train,
-                                      alpha=alpha,
-                                      seed=0,
-                                      train.fun=funs_lasso$train,
-                                      predict.fun=funs_lasso$predict,
-                                      verbose = T)
-
-cov_split_lasso = colMeans(outsplit_lasso$lo <= y_train & y_train <= outsplit_lasso$up)
-cov_split_lasso
-len_split_lasso = colMeans(outsplit_lasso$up - outsplit_lasso$lo)
-len_split_lasso
-
-
-# random forest
-funs_rf = rf.funs(ntree = 200, nodesize = 2)
-
-outsplit_rf = conformal.pred.split(x_train,
-                                   y_train,
-                                   x_train,
-                                   alpha=alpha,
-                                   seed=0,
-                                   train.fun=funs_rf$train,
-                                   predict.fun=funs_rf$predict,
-                                   verbose = T)
-
-cov_split_rf = colMeans(outsplit_rf$lo <= y_train & y_train <= outsplit_rf$up)
-cov_split_rf
-len_split_rf = colMeans(outsplit_rf$up - outsplit_rf$lo)
-len_split_rf
-
-
-
-outsplit_xgb = conformal.pred.split(x_train,
-                                    y_train,
-                                    x_train,
-                                    alpha=alpha,
-                                    seed=0,
-                                    train.fun=function(x_train, y_train) xgboost(data = xgb.DMatrix(data = x_train, label = y_train), max.depth = 3, nrounds = 50),
-                                    predict.fun=function(model, x_train) predict(model, xgb.DMatrix(data = x_train)),
-                                    verbose = T)
-
-
-
-# xgboost
 train.fun = function(x, y, out = NULL) {
   xgb_mat = xgb.DMatrix(data = x, label = y)
   return(xgboost(data = xgb_mat, max.depth = 2, nrounds = 75))
@@ -138,44 +72,111 @@ predict.fun = function(out, newx) {
   return(predict(out, newx_mat))
 }
 
-outsplit_xgb = conformal.pred.split(x_train,
-                                    y_train,
-                                    x_train,
-                                    alpha=alpha,
-                                    seed=0,
-                                    train.fun=train.fun,
-                                    predict.fun=predict.fun,
-                                    verbose = T)
 
-cov_split_xgb = colMeans(outsplit_xgb$lo <= y_train & y_train <= outsplit_xgb$up)
-cov_split_xgb
-len_split_xgb = colMeans(outsplit_xgb$up - outsplit_xgb$lo)
-len_split_xgb
+funs_list <- list(lm.funs(lambda = 0),
+               lasso.funs(cv = T),
+               rf.funs(ntree = 200, nodesize = 2),
+               list("train"= train.fun,
+                    "predict" = predict.fun))
+
+outsplit_train <- function(funs=NULL,
+                           x_train,
+                           y_train,
+                           alpha=0.05,
+                           seed=0){
+
+    conf <- conformal.pred.split(x_train,
+                         y_train,
+                         x_train,
+                         alpha=alpha,
+                         seed=0,
+                         train.fun=funs$train,
+                         predict.fun=funs$predict,
+                         verbose = T)
+
+  return(list("conf"=conf,
+              "coverage" = colMeans(conf$lo <= y_train & y_train <= conf$up),
+              "length" = colMeans(conf$up - conf$lo)))
+
+}
+
+
+results <- lapply(1:length(funs_list), function(x) outsplit_train(funs=funs_list[[x]], x_train, y_train, alpha))
+
+coverage <- sapply(1:length(funs_list), function(x) results[[x]]$coverage)
+length <- sapply(1:length(funs_list), function(x) results[[x]]$length)
+
+coverage
+length
 
 mse <- c(mse_lm, mse_lasso, mse_rf, mse_xgboost)
-coverage <- c(cov_split_lm, cov_split_lasso, cov_split_rf, cov_split_xgb)
-length <- c(len_split_lm, len_split_lasso, len_split_rf, len_split_xgb)
 
 mse
 coverage
 length
-which.min(length[coverage > 0.9])
+best_model
+best_model <- which.min(length[coverage > 0.9])
 
 
-# prediction
-
-outsplit_xgb = conformal.pred.split(x_train,
-                                    y_train,
-                                    x_test,
-                                    alpha=alpha,
-                                    seed=0,
-                                    train.fun=train.fun,
-                                    predict.fun=predict.fun,
-                                    verbose = T)
+outsplit_best <- conformal.pred.split(x=x_train,
+                             y=y_train,
+                             x0=x_test,
+                             alpha=alpha,
+                             seed=0,
+                             train.fun=funs_list[[best_model]]$train,
+                             predict.fun=funs_list[[best_model]]$predict,
+                             verbose = T)
 
 
-
-# output
-output <- cbind(outsplit_xgb$lo, outsplit_xgb$up)
-
+# save output
+output <- cbind(outsplit_best$lo, outsplit_best$up)
 write.table(output, "output.txt", row.names=F, col.names = F)
+
+
+library(ggplot2)
+library(patchwork)
+
+
+
+a <- data.frame(y=y_train, "lo"=results[[1]]$conf$lo, "up"=results[[1]]$conf$up) %>%
+  arrange(y) %>%
+  mutate(id = 1:nrow(x_train)) %>%
+  ggplot() +
+  geom_linerange(aes(x=id, ymin=lo, ymax=up), size=3, color="gray") +
+  geom_point(aes(id, y)) +
+  theme_minimal() +
+  ylim(90, 150) +
+  ggtitle("lm")
+
+b <- data.frame(y=y_train, "lo"=results[[2]]$conf$lo, "up"=results[[2]]$conf$up) %>%
+  arrange(y) %>%
+  mutate(id = 1:nrow(x_train)) %>%
+  ggplot() +
+  geom_linerange(aes(x=id, ymin=lo, ymax=up), size=3, color="gray") +
+  geom_point(aes(id, y)) +
+  theme_minimal() +
+  ylim(90, 150) +
+  ggtitle("lasso")
+
+c <- data.frame(y=y_train, "lo"=results[[3]]$conf$lo, "up"=results[[3]]$conf$up) %>%
+  arrange(y) %>%
+  mutate(id = 1:nrow(x_train)) %>%
+  ggplot() +
+  geom_linerange(aes(x=id, ymin=lo, ymax=up), size=3, color="gray") +
+  geom_point(aes(id, y)) +
+  theme_minimal() +
+  ylim(90, 150) +
+  ggtitle("rf")
+
+d <- data.frame(y=y_train, "lo"=results[[4]]$conf$lo, "up"=results[[4]]$conf$up) %>%
+  arrange(y) %>%
+  mutate(id = 1:nrow(x_train)) %>%
+  ggplot() +
+  geom_linerange(aes(x=id, ymin=lo, ymax=up), size=3, color="gray") +
+  geom_point(aes(id, y)) +
+  theme_minimal() +
+  ylim(90, 150) +
+  ggtitle("xgb")
+
+(a | b | c | d)
+
