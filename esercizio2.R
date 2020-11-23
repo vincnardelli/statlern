@@ -14,11 +14,11 @@ x_test <- as.matrix(test)
 y_train <- train$y
 
 
-alpha = 0.10
+alpha = 0.05
 
 # vediamo come performa il modello sul train!
 lm <- lm(y~., train)
-lm_predict<- predict(model, x_train, s = cv$lambda.min)
+lm_predict<- predict(lm, newx = x_train)
 mse_lm <- mean((lm_predict - y_train)^2)
 plot(x_train[,2], y_train)
 
@@ -45,7 +45,7 @@ xgb_train = xgb.DMatrix(data = x_train[train_id, ], label = y_train[train_id])
 xgb_test = xgb.DMatrix(data = x_train[test_id, ], label = y_train[test_id])
 
 
-xgbc = xgboost(data = xgb_train, max.depth = 2, nrounds = 200)
+xgbc = xgboost(data = xgb_train, max.depth = 2, nrounds = 75)
 print(xgbc)
 
 pred_y = predict(xgbc, xgb_train)
@@ -57,11 +57,10 @@ mean((y_train[test_id] - pred_y)^2)
 
 
 xgb_all = xgb.DMatrix(data = x_train, label = y_train)
-xgbc = xgboost(data = xgb_all, max.depth = 2, nrounds = 50)
+xgbc = xgboost(data = xgb_all, max.depth = 2, nrounds = 75)
 pred_y = predict(xgbc, xgb_all)
 mean((y_train - pred_y)^2)
 
-xgb.cv(data = xgb_all, max.depth = 2, nrounds = 40, nfold=5)
 mse_xgboost <- mean((pred_y - y_train)^2)
 
 
@@ -82,26 +81,6 @@ len_split_lm = colMeans(outsplit_lm$up - outsplit_lm$lo)
 len_split_lm
 
 
-
-# splines (ho qualche dubbio!)
-
-funs_sp = smooth.spline.funs(cv=TRUE)
-outsplit_sp = conformal.pred.split(x_train,
-                                   y_train,
-                                   x_train,
-                                   alpha=alpha,
-                                   seed=0,
-                                   train.fun=funs_lasso$train,
-                                   predict.fun=funs_lasso$predict,
-                                   verbose = T)
-
-cov_split_sp = colMeans(outsplit_sp$lo <= y_train & y_train <= outsplit_sp$up)
-cov_split_sp
-len_split_sp = colMeans(outsplit_sp$up - outsplit_sp$lo)
-len_split_sp
-
-
-
 # lasso
 funs_lasso = lasso.funs(cv = T)
 outsplit_lasso = conformal.pred.split(x_train,
@@ -120,7 +99,7 @@ len_split_lasso
 
 
 # random forest
-funs_rf = rf.funs(ntree = 500, nodesize = 2)
+funs_rf = rf.funs(ntree = 200, nodesize = 2)
 
 outsplit_rf = conformal.pred.split(x_train,
                                    y_train,
@@ -136,10 +115,23 @@ cov_split_rf
 len_split_rf = colMeans(outsplit_rf$up - outsplit_rf$lo)
 len_split_rf
 
+
+
+outsplit_xgb = conformal.pred.split(x_train,
+                                    y_train,
+                                    x_train,
+                                    alpha=alpha,
+                                    seed=0,
+                                    train.fun=function(x_train, y_train) xgboost(data = xgb.DMatrix(data = x_train, label = y_train), max.depth = 3, nrounds = 50),
+                                    predict.fun=function(model, x_train) predict(model, xgb.DMatrix(data = x_train)),
+                                    verbose = T)
+
+
+
 # xgboost
 train.fun = function(x, y, out = NULL) {
   xgb_mat = xgb.DMatrix(data = x, label = y)
-  return(xgboost(data = xgb_mat, max.depth = 2, nrounds = 200))
+  return(xgboost(data = xgb_mat, max.depth = 2, nrounds = 75))
 }
 predict.fun = function(out, newx) {
   newx_mat = xgb.DMatrix(data = newx)
@@ -160,9 +152,9 @@ cov_split_xgb
 len_split_xgb = colMeans(outsplit_xgb$up - outsplit_xgb$lo)
 len_split_xgb
 
-mse <- c(mse_lm, mse_lasso, NA, mse_rf, mse_xgboost)
-coverage <- c(cov_split_lm, cov_split_sp, cov_split_lasso, cov_split_rf, cov_split_xgb)
-length <- c(len_split_lm, len_split_sp, len_split_lasso, len_split_rf, len_split_xgb)
+mse <- c(mse_lm, mse_lasso, mse_rf, mse_xgboost)
+coverage <- c(cov_split_lm, cov_split_lasso, cov_split_rf, cov_split_xgb)
+length <- c(len_split_lm, len_split_lasso, len_split_rf, len_split_xgb)
 
 mse
 coverage
